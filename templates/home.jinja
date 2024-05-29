@@ -1,0 +1,659 @@
+<!-- 
+    Here you'll find the main exhibit: the chat application code. Feel free to look around!
+-->
+{% extends 'base.jinja' %}
+
+
+{% block content %} 
+   <style>
+    nav {
+        border-bottom: 1px solid black;
+        overflow: auto
+    }
+
+    #message_box {
+        border: 1px solid black; 
+        height: 400px; 
+        width: 800px; 
+        overflow: auto;
+        padding: 2px;
+    }
+
+    .text  {
+        margin-top: 2px;
+        margin-bottom: 2px;
+    }
+
+</style>
+
+<!--Navbar, you'll see the username here-->
+<nav style="border-bottom: 1px solid black;">
+    <ol style="float: right">
+        <li style="display:inline-block">Username:  {{ username }} </li>
+    </ol>
+</nav>
+
+<h1>Messaging App </h1>
+
+<main>
+    <!-- The messages are displayed here -->
+    <section id="message_box"></section>
+
+    <!-- These part ideally should be a form element, 
+    but I wrote this code a year ago and I don't want to break anything...-->
+    <section id="chat_box">
+        <p class="text">Chat with: </p>
+        <input id="receiver" placeholder="username">
+        <!-- MDN says its bad practice to use the onclick attribute,
+        but we're using it anyways coz its easy :)-->
+        <button onclick="join_room()">Chat</button>
+    </section>
+
+    <!-- The (message) input box is set to display: none initially, 
+    this means the input box is "invisible" initially-->
+    <section id="input_box" style="display: none" >
+        <p class="text">Message: </p>
+        <input id="message" placeholder="message">
+        <button onclick="send()">Send</button>
+        <button onclick="leave()">Leave Room</button>
+    </section>
+
+{# <!-- Add a password field in the UI for deriving the encryption key -->
+<p>Password (for session encryption):</p>
+<input id="password" type="password" placeholder="Enter your password">
+<button onclick="loadChatHistory()">Load Chat History</button> #}
+
+    <section id="friend_list">
+    <h2>Friends</h2>
+    <ul id="friends-list">
+    {% for friend in friends %}
+        <li>
+        {{ friend}} 
+        <button id="chat_button_{{ friend }}" onclick="joinChat('{{ friend }}')">Chat</button>
+        </li>
+    {% endfor %}
+    </ul>
+  </section>
+
+  <section id="add_friend_section">
+    <h2>Add a Friend</h2>
+    <input id="friend_username" placeholder="Friend's username" type="text">
+    <button id="add_friend_button">Add Friend</button>
+</section>
+
+<section id="friend_requests_section">
+    <h2>Friend Requests</h2>
+    <ul id="friend-requests-list">
+       
+    </ul>
+</section>
+
+<section id="sent_friend_requests_section">
+    <h2>Sent Friend Requests</h2>
+    <ul id="sent-friend-requests-list"></ul>
+</section>
+
+<button><a href="{{ url_for('logout') }}">Logout</a></button>
+
+</main>
+
+<script src="/static/js/libs/socket.io.min.js"></script>
+
+<script>
+let room_id = 0;
+
+$("#message").on("keyup", (e) => {
+    if (e.key == "Enter") {
+        send();
+    }
+})
+
+$("#receiver").on("keyup", (e) => {
+    if (e.key == "Enter") {
+        join_room();
+    }
+})
+
+$(document).ready(() => {
+    if (Cookies.get("room_id") == undefined) {
+        return;
+    }
+    $("#chat_box").hide();
+    $("#input_box").show();
+    $("button[id^='chat_button_']").prop('disabled', true);
+    room_id = parseInt(Cookies.get("room_id"));
+})
+
+let username = "{{ username }}";
+Cookies.set('username', username);
+const socket = io();
+
+async function generateSymmetricKey() {
+    try {
+        const key = await window.crypto.subtle.generateKey(
+            {
+                name: 'AES-GCM',
+                length: 256,
+            },
+            true, 
+            ['encrypt', 'decrypt'] 
+        );
+
+        const exportedKey = await window.crypto.subtle.exportKey('raw', key);
+        
+        const exportedKeyString = btoa(String.fromCharCode(...new Uint8Array(exportedKey)));
+        
+        localStorage.setItem('symkey', exportedKeyString);
+
+    } catch (error) {
+        console.error('Error generating symmetric key:', error);
+    }
+}
+
+function loadSymmetricKey() {
+    try {
+        const exportedKeyString = localStorage.getItem('symmetricKey');
+        
+        if (!exportedKeyString) {
+            return null;
+        }
+        
+        const exportedKey = Uint8Array.from(atob(exportedKeyString), c => c.charCodeAt(0));
+        
+        return window.crypto.subtle.importKey(
+            'raw', 
+            exportedKey, 
+            { name: 'AES-GCM' }, 
+            true, 
+            ['encrypt', 'decrypt']
+        );
+    } catch (error) {
+        console.error('Error loading symmetric key:', error);
+        return null;
+    }
+}
+
+async function generate_and_store_keys() {
+    const keyPair = await window.crypto.subtle.generateKey(
+        {
+            name: "RSA-OAEP",
+            modulusLength: 2048,
+            publicExponent: new Uint8Array([0x01, 0x00, 0x01]),
+            hash: "SHA-256",
+        },
+        true,
+        ["encrypt", "decrypt"]
+    );
+
+    const publicKey = await window.crypto.subtle.exportKey("spki", keyPair.publicKey);
+    const privateKey = await window.crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
+
+    const publicKeyString = btoa(String.fromCharCode(...new Uint8Array(publicKey)));
+    const privateKeyString = btoa(String.fromCharCode(...new Uint8Array(privateKey)));
+
+    localStorage.setItem("mypublicKey", publicKeyString);
+    localStorage.setItem("privateKey", privateKeyString);
+}
+
+async function load_public_key() {
+    const publicKeyString = await localStorage.getItem('mypublicKey');
+
+    if (publicKeyString) {
+        try {
+            return Uint8Array.from(atob(publicKeyString), c => c.charCodeAt(0));
+        } catch (error) {
+            console.error("Error decoding publicKeyString:", error);
+            return null;
+        }
+    } else {
+        return null;
+    }
+}
+
+function load_private_key() {
+    const privateKeyString = localStorage.getItem("privateKey");
+
+    if (privateKeyString) {
+        const privateKey = Uint8Array.from(atob(privateKeyString), c => c.charCodeAt(0));
+        return privateKey;
+    } else {
+        return null;
+    }
+}
+
+socket.on("incoming", async (msg, type, color = "black") => {
+    if (type === "standard") {
+        add_message(msg, color);
+    } else {
+        try {
+            const split_message = msg.split(":");
+            const user = split_message[0];
+            const encrypt_msg = split_message[1].trim();
+
+            const symmetricKey_string = localStorage.getItem("symkey");
+            if (!symmetricKey_string) {
+                console.error('Symmetric key not found.');
+                return;
+            }
+            const symmetricKey = Uint8Array.from(atob(symmetricKey_string), c => c.charCodeAt(0));
+            const uint_encrypted_msg = Uint8Array.from(atob(encrypt_msg), c => c.charCodeAt(0));
+            const iv = uint_encrypted_msg.slice(0, 12);
+            const encrypted_message = uint_encrypted_msg.slice(12);
+            const importedSymKey = await window.crypto.subtle.importKey(
+                'raw',
+                symmetricKey,
+                { name: 'AES-GCM' },
+                true,
+                ['decrypt']
+            );
+
+            const decryptedMessage = await window.crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv: iv },
+                importedSymKey,
+                encrypted_message  
+            );
+
+            const decrypted_message = new TextDecoder().decode(decryptedMessage);
+            const final_message = `${user}: ${decrypted_message}`
+            add_message(final_message, color);
+            const encryptedForStorage = await encryptMessage(final_message, sessionStorage.getItem('encryptionKey'));
+            console.log('Encrypted message for storage: ' + encryptedForStorage)
+            storeMessage(encryptedForStorage);  
+
+        } catch (error) {
+            console.error('Error decrypting message:', error);
+        }
+    }
+});
+
+async function send() {
+    let message = $("#message").val();
+    $("#message").val("");
+
+    const symmetric_keyString = localStorage.getItem("symkey")
+
+    if (!symmetric_keyString) {
+        console.error('Symmetric key not found.');
+        return;
+    }
+
+    try {
+    
+    const symmetricKey = Uint8Array.from(atob(symmetric_keyString), c => c.charCodeAt(0));
+
+    // convert the message into uint8array for the crypto API
+    const uintmessage = new TextEncoder().encode(message)
+
+    const iv = crypto.getRandomValues(new Uint8Array(12))
+
+    // import symmetric key to crypto API
+    const importedSymKey = await window.crypto.subtle.importKey(
+            'raw', 
+            symmetricKey, 
+            { name: 'AES-GCM' }, 
+            true, 
+            ['encrypt']
+        );
+    
+    // encrypt message using symmetric encryption
+    const encryptedMessage = await window.crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: iv },
+        importedSymKey,
+        uintmessage
+    );
+
+    // prepend iv to the encrypted message
+    const prepended_text = new Uint8Array(iv.length + encryptedMessage.byteLength);
+    prepended_text.set(iv, 0);
+    prepended_text.set(new Uint8Array(encryptedMessage), iv.length);
+
+    // convert to base 64 for transmission
+    const encrypted_message = btoa(String.fromCharCode(...prepended_text));
+    console.log('This is the encrypted message: ' + encrypted_message)
+
+    socket.emit("send", username, encrypted_message, room_id);
+    } catch (error) {
+        console.error('Error encrypting message:', error);
+    }
+
+}
+
+function join_room() {
+    let receiver = $("#receiver").val();
+    let friendList = {{ friends | tojson }};
+    if (!friendList.includes(receiver)) {
+        alert("You can only chat with friends.");
+        return;
+    }
+    socket.emit("join", username, receiver, (res) => {
+        if (typeof res != "number") {
+            alert(res);
+            return;
+        }
+        room_id = res;
+        Cookies.set("room_id", room_id);
+        $("#chat_box").hide();
+        $("#input_box").show();
+        $("button[id^='chat_button_']").prop('disabled', true);
+    });
+}
+
+socket.on("gen_Akeys", () =>{
+    generate_and_store_keys()
+});
+
+socket.on("gen_Skey", () => {
+    generateSymmetricKey()
+});
+
+socket.on("delete_keys", () => {
+    localStorage.clear()
+});
+
+socket.on("load_joiner_public_key", async (receiver_name, sender_name) => {
+    await generate_and_store_keys();
+    const jpKey = await load_public_key()
+    if (jpKey) {
+        const joiner_public_key = btoa(String.fromCharCode(...jpKey))
+        socket.emit("send_joiner_public_key", receiver_name, sender_name, joiner_public_key);
+    } else {
+        console.error("Failed to load public key for sender.");
+    }
+});
+
+socket.on("receive_joiner_public_key", async (publicKey, sender_name) => {
+    try {
+        localStorage.setItem("receiverpublicKey", publicKey);
+    } catch (error) {
+        console.error("Error decoding publicKey:", error);
+    }
+
+    try {
+    const decodedPublicKey = atob(publicKey);
+    
+        // Importing the public key into the crypto API
+    const importedPublicKey = await window.crypto.subtle.importKey(
+        "spki",
+        Uint8Array.from(decodedPublicKey, c => c.charCodeAt(0)),
+        { name: "RSA-OAEP", hash: { name: "SHA-256" } },
+        true,
+        ["encrypt"]
+    );
+
+    // get symmetriv key from local storage
+    const symkeyString = localStorage.getItem("symkey");
+    if (!symkeyString) {
+        console.error("Symmetric key not found in local storage.");
+        return;
+    }
+
+    // converting the symmetric key into an Uint8Array
+    const symkey = Uint8Array.from(atob(symkeyString), c => c.charCodeAt(0));
+
+    // encrypting the symmetric key
+    // stored in encryptedSymKey which is a Uint8array
+    const encryptedSymkey = await window.crypto.subtle.encrypt(
+        { name: "RSA-OAEP" },
+        importedPublicKey,
+        symkey
+    );
+
+    socket.emit("send_encrypted_symmetric_key", encryptedSymkey, sender_name)
+    } catch (error) {
+        console.error("Error encrypting symmetric key:", error);
+    }
+});
+
+socket.on("receive_encrypted_symKey", async (encryptedSymkey) => {
+       try {
+        const privateKeyString = localStorage.getItem("privateKey");
+        if (!privateKeyString) {
+            console.error("Private key not found in local storage.");
+            return;
+        }
+
+        const privateKey = Uint8Array.from(atob(privateKeyString), c => c.charCodeAt(0));
+        
+        // import to crypto API for decryption
+        const importedPrivateKey = await window.crypto.subtle.importKey(
+            "pkcs8",
+            privateKey,
+            { name: "RSA-OAEP", hash: { name: "SHA-256" } },
+            true,
+            ["decrypt"]
+        );
+
+        {# // Convert the received encrypted symmetric key from base64 encoding to its binary representation
+        const encryptedSymkeyBinary = Uint8Array.from(atob(encryptedSymkey), c => c.charCodeAt(0)); #}
+
+        // Decrypt the encrypted symmetric key using the private key
+        const decryptedSymkey = await window.crypto.subtle.decrypt(
+            { name: "RSA-OAEP" },
+            importedPrivateKey,
+            encryptedSymkey
+        );
+
+        // Store the decrypted symmetric key in local storage
+        const decryptedSymkeyString = btoa(String.fromCharCode(...new Uint8Array(decryptedSymkey)));
+        localStorage.setItem("symkey", decryptedSymkeyString);
+    } catch (error) {
+        console.error("Error decrypting and storing symmetric key:", error);
+    }
+});
+
+function leave() {
+    Cookies.remove("room_id");
+    socket.emit("leave", username, room_id);
+    $("button[id^='chat_button_']").prop('disabled', false);
+    $("#input_box").hide();
+    $("#chat_box").show();
+}
+
+function add_message(message, color) {
+    let box = $("#message_box");
+    let child = $(`<p style="color:${color}; margin: 0px;"></p>`).text(message);
+    box.append(child);
+}
+
+async function storeMessage(encryptedMessage) {
+    socket.emit("store_message", encryptedMessage, room_id, username);
+}
+
+document.getElementById("add_friend_button").addEventListener("click", function() {
+    const friendUsername = document.getElementById("friend_username").value;
+    const userUsername = "{{ username }}";
+    if (friendUsername) {
+        axios.post("/send_friend_request", {
+            user_id: userUsername,
+            friend_id: friendUsername
+        })
+        .then(function (response) {
+            alert(response.data.message); 
+            if (response.data.message === "Friend request sent successfully!") {
+                addSentFriendRequest(friendUsername);
+            }
+            document.getElementById("friend_username").value = "";
+        })
+        .catch(function (error) {
+            if (error.response && error.response.data) {
+                alert(error.response.data.error);
+            } else {
+                alert("An error occurred.");
+            }
+        });
+    } else {
+        alert("Please enter a friend's username.");
+    }
+});
+
+function addSentFriendRequest(friendUsername) {
+    const sentRequestsList = document.getElementById("sent-friend-requests-list");
+    const requestItem = document.createElement("li");
+    requestItem.textContent = `To: ${friendUsername} (Pending)`;
+    sentRequestsList.appendChild(requestItem);
+}
+</script>
+
+<script>
+function fetchFriendRequests() {
+    const userUsername = "{{ username }}";
+    axios.get("/friend_requests", { params: { user_id: userUsername } })
+    .then(function(response) {
+        const requestsList = document.getElementById("friend-requests-list");
+        requestsList.innerHTML = '';
+        response.data.forEach(req => {
+            const requestItem = document.createElement("li");
+            requestItem.textContent = `From: ${req.user_id}`;
+            const acceptButton = document.createElement("button");
+            acceptButton.textContent = "Accept";
+            acceptButton.onclick = function() { respondFriendRequest(req.user_id, "accept"); };
+            const rejectButton = document.createElement("button");
+            rejectButton.textContent = "Reject";
+            rejectButton.onclick = function() { respondFriendRequest(req.user_id, "reject"); };
+            requestItem.appendChild(acceptButton);
+            requestItem.appendChild(rejectButton);
+            requestsList.appendChild(requestItem);
+        });
+    })
+    .catch(function(error) {
+        console.log(error);
+        alert("Failed to fetch friend requests.");
+    });
+}
+
+function respondFriendRequest(friendId, response) {
+    const userUsername = "{{ username }}";
+    axios.post("/respond_friend_request", {
+        user_id: userUsername,
+        friend_id: friendId,
+        response: response
+    })
+    .then(function(response) {
+        alert(response.data.message);
+        if (response.data.message.toLowerCase().includes("accepted")) {
+            const friendsList = document.getElementById("friends-list");
+            const newFriendItem = document.createElement("li");
+            newFriendItem.textContent = friendId;
+            const chatButton = document.createElement("button");
+            chatButton.textContent = "Chat";
+            chatButton.onclick = function() { joinChat(friendId); };
+            newFriendItem.appendChild(chatButton);
+            friendsList.appendChild(newFriendItem);
+        }
+        fetchFriendRequests();
+    })
+    .catch(function(error) {
+        console.log(error);
+        alert("Failed to respond to friend request.");
+    });
+}
+
+$(document).ready(function() {
+    fetchFriendRequests();
+    fetchSentFriendRequests();
+});
+
+function fetchSentFriendRequests() {
+    const userUsername = "{{ username }}";
+    axios.get("/sent_friend_requests", { params: { user_id: userUsername } })
+    .then(function(response) {
+        const sentRequestsList = document.getElementById("sent-friend-requests-list");
+        sentRequestsList.innerHTML = '';
+        response.data.forEach(req => {
+            const requestItem = document.createElement("li");
+            requestItem.textContent = `To: ${req.friend_id} (Pending)`;
+            sentRequestsList.appendChild(requestItem);
+        });
+    })
+    .catch(function(error) {
+        console.log(error);
+        alert("Failed to fetch sent friend requests.");
+    });
+}
+socket.on('sent_friend_request', () => {
+    fetchSentFriendRequests();
+});
+</script>
+
+<script>
+function joinChat(friendUsername) {
+    $("#receiver").val(friendUsername);
+    join_room();
+    $("button[id^='chat_button_']").prop('disabled', true);
+}
+</script>
+
+<script>
+async function encryptMessage(message, keyData) {
+    if (!keyData) {
+        console.error('Encryption key not found.');
+        return;
+    }
+    const key = await crypto.subtle.importKey(
+        'raw',
+        new Uint8Array(JSON.parse(keyData)),
+        { name: 'AES-GCM', length: 256 },
+        true,
+        ['encrypt', 'decrypt']
+    );
+
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encodedMessage = new TextEncoder().encode(message);
+    const encryptedContent = await window.crypto.subtle.encrypt(
+        { name: "AES-GCM", iv: iv },
+        key,
+        encodedMessage
+    );
+
+    const combinedArray = new Uint8Array(iv.length + encryptedContent.byteLength);
+    combinedArray.set(iv, 0);
+    combinedArray.set(new Uint8Array(encryptedContent), iv.length);
+
+    const base64String = btoa(String.fromCharCode(...combinedArray));
+    return base64String;
+}
+
+
+async function decryptMessage(encryptedMessage) {
+    
+    const keyData = sessionStorage.getItem('encryptionKey');
+    if (!keyData) {
+        console.error('Encryption key not found.');
+        return;
+    }
+
+    const key = await crypto.subtle.importKey(
+        'raw',
+        new Uint8Array(JSON.parse(keyData)),
+        { name: 'AES-GCM', length: 256 },
+        true,
+        ['decrypt']
+    );
+
+    const data = Uint8Array.from(atob(encryptedMessage), c => c.charCodeAt(0));
+    const iv = data.slice(0, 12);
+    const encryptedData = data.slice(12);
+
+    const decryptedContent = await window.crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: iv },
+        key,
+        encryptedData
+    );
+
+    return new TextDecoder().decode(decryptedContent);
+}
+</script>
+
+<script>
+socket.on('display_messages', function(messages) {
+    console.log(messages)
+    messages.forEach(encryptedMessage => {
+        decryptMessage(encryptedMessage).then(decryptedMessage => {
+            add_message(decryptedMessage, 'black');
+        });
+    });
+});
+
+</script>
+
+{% endblock %}
