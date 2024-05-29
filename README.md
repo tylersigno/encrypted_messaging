@@ -1,60 +1,35 @@
-# Chat Messaging Template
-This project contains the necessary scaffold in order to get your multi-million chat application idea started! The main technology driving this application is `socket.io` which allows two way communication between the client side and server side through so called "socket events". 
+# SecureChat - End-to-End Encrypted Messaging Web Application
 
-Unfortunately, the maker of this template is lousy and forgot to put in the necessary security measures. It's your job to ensure a safe communication between users of your chat system. 
+SecureChat is a web application designed to provide secure, real-time messaging between users. The application ensures the privacy and security of user communications through end-to-end encryption, robust authentication mechanisms, and user-friendly features for managing friends and messages.
 
-# Setup
-To setup, install these packages 
+## Features
 
-```bash
-pip install SQLAlchemy flask-socketio simple-websocket
-```
+- **User Authentication**: Secure registration and login processes using hashed passwords (SHA-256) and session management with Flask.
+- **End-to-End Encryption**: All messages are encrypted using AES-GCM encryption to ensure privacy and security.
+- **Real-Time Messaging**: Instantaneous message exchange using Socket.IO for real-time, bidirectional communication.
+- **Friend Management**: Users can send, accept, and manage friend requests to build their contact list.
+- **Secure Storage**: User data, including messages and friend lists, are securely stored and accessed.
 
-# Running the App
-To run the app, 
+## Technologies Used
 
-```bash
-python3 app.py
-```
+### Languages
+- **Python**: Server-side programming for handling business logic, authentication, and encryption.
+- **JavaScript**: Client-side scripting for dynamic user interactions and asynchronous communication.
+- **HTML/CSS**: Structuring and styling the web pages for a responsive and interactive user interface.
 
-# Project Navigation
-The templates folder contains all of the HTML template files that will be served to the user. These HTML files, as you may have noticed, all has a `.jinja` extension. In actuality, these files also contain various Jinja extended syntax that makes rendering the data to the server a lot easier. See the comments on top of these files to know what they are.
+### Libraries and Frameworks
+- **Flask**: Lightweight web framework for Python, used for building the server-side application and managing routes.
+- **Socket.IO**: JavaScript library for enabling real-time, bidirectional communication between the client and server.
+- **Jinja**: Templating engine for Python, used with Flask to render dynamic HTML content.
+- **Axios**: Promise-based HTTP client for JavaScript, used for making asynchronous requests to the server.
+- **jQuery**: JavaScript library for simplifying DOM manipulation and event handling.
+- **CryptoJS**: Library for JavaScript cryptographic operations, used for client-side encryption and hashing.
 
-`app.py` is where the flask application "lives" and this is where it is initialized, `db.py` is where the database interface is. `models.py` is where you define the various database models. This is where you tell SQLAlchemy how to map the SQL tables into Python objects. Finally `socket_routes.py` is where you can find out what happens when JS emits a socket event to the server.
+### Security
+- **AES-GCM Encryption**: Implemented to secure message content, ensuring only the intended recipient can decrypt and read the messages.
+- **SHA-256 Hashing**: Used for securely hashing user passwords before storing them in the database.
+- **CSRF Protection**: Ensured through Flask's built-in security features to protect against cross-site request forgery attacks.
 
-The static folder is where you keep all of the website's assets, this includes your JS and CSS scripts, images, videos?, etc. 
-
-Finally, the database folder is what makes everything persistent. This is where your database is stored. Delete the database folder to do a clean wipe of your entire database. But beware, with great power, ok whatever you know the rest of the line.
-
-# Usage
-To use the app, setup and run the app as per the instructions above. Also, if you're using VSCode, I recommend installing the Better Jinja extension (it's not perfect unfortunately, but it's enough). 
-
-Now, it will show `Running on http://127.0.0.1:5000`, open that link in 2 different browsers (for instance Chrome and Firefox).
-
-Click "Sign up", or "Log in" if you've already signed up. Put in your username and password.
-
-Now, open your other browser and sign up/log in with a different username and password. 
-
-In the first browser, type in the other username (the username inputted into the other browser) and click Chat. Do the same for the other browser.
-
-Once both users have connected, you're good to go. Go ahead and start chatting to yourself :D
-
-To chat with a different user, feel free to leave the room and chat with another user.
-
-# A Warning
-Since this app uses cookies, you can't open it in separate tabs to test multiple client communication. This is because cookies are shared across tabs. You'd have to use multiple browsers to test client communication.
-
-# Credits (or I guess the "tech stack" used)
-- Javascript
-- Python
-
-## Javascript Dependencies
-- Socket.io
-- Axios (for sending post requests, but a bit easier than using fetch())
-- JQuery (if you're familiar with web frameworks this is like the stone age all over again)
-- Cookies (small browser library that makes working with cookies just a bit easier)
-
-## Python Dependencies
-- Template Engine: Jinja
-- Database ORM: SQL Alchemy (use SQLite instead if you are an SQL master)
-- Flask Socket.io
+### Development Tools
+- **Git**: Version control system for managing project codebase and collaboration.
+- **VS Code**: Code editor used for development with extensions to support Python and JavaScript.
